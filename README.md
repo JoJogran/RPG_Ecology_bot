@@ -1,22 +1,44 @@
-# RPG_Ecology_bot
 import telebot
 from telebot import types
 import sqlite3
 
 # === НАСТРОЙКА БОТА ===
-BOT_TOKEN = 'YOR_TOKEN'
+BOT_TOKEN = 'TOKEN'
 bot = telebot.TeleBot(BOT_TOKEN)
 
-
-# === РАБОТА С БАЗОЙ ДАННЫХ ===
+# === ИМЯ ФАЙЛА БАЗЫ ===
 DB_NAME = 'players.db'
 
+# === СЕКРЕТНАЯ КОМАНДА ===
+@bot.message_handler(func=lambda message: message.text == "PavelSpasiboVam")
+def secret_thanks(message):
+    long_message = """
+🎉 *Спасибо, Павел!*
+
+Благодаря вам я смог создать этот проект и научиться многому:
+• Работе с базами данных
+• Работе с вс кодом
+• Работе с Google Collab
+• Работе с Телеграмм-ботами
+• Работе в команде
+• Теперь я могу создавать ИИ
+
+Все те 8 месяцев которые я у вас обучался были одними из лучших месяцев в моей жизни,вы всегда готовы были помоч,и помогали.
+Я не знаю кто вы для других,но для меня вы — первый луч солнца после долгой ночи, пробуждающий во мне надежду и силы идти дальше.
+
+Вы не просто учитель — ты вдохновитель.  
+Ваши объяснения всегда были понятны, терпеливы и всегда по делу.
+
+Спасибо вам,Павел.
+
+С глубоким уважением,
+Дмитрий.    """
+    bot.send_message(message.chat.id, long_message, parse_mode='Markdown')
+# === РАБОТА С БАЗОЙ ДАННЫХ ===
 def init_db():
-    """Создаёт таблицы при запуске"""
+    """Создаёт таблицу игроков"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-
-    # Основная таблица игроков
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS players (
             user_id INTEGER PRIMARY KEY,
@@ -27,19 +49,6 @@ def init_db():
             registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-
-    # Таблица миссий
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS missions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            title TEXT,
-            reward INTEGER,
-            completed BOOLEAN DEFAULT 0,
-            FOREIGN KEY (user_id) REFERENCES players (user_id)
-        )
-    ''')
-
     conn.commit()
     conn.close()
 
@@ -107,61 +116,23 @@ def add_item(user_id, item):
     return False
 
 
-def remove_item(user_id, item):
-    """Удаляет предмет из инвентаря"""
+def has_item(user_id, item_name):
+    """Проверяет, есть ли предмет в инвентаре"""
     player = get_player(user_id)
-    if item in player['inventory']:
-        player['inventory'].remove(item)
-        new_inv = ", ".join(player['inventory'])
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('UPDATE players SET inventory = ? WHERE user_id = ?', (new_inv, user_id))
-        conn.commit()
-        conn.close()
+    return player and item_name in player['inventory']
 
 
-def add_mission(user_id, title, reward):
-    """Добавляет задание"""
+def update_player_stats(user_id, money_change=0, good_deeds_change=0):
+    """Изменяет деньги и добрые дела"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO missions (user_id, title, reward, completed)
-        VALUES (?, ?, ?, 0)
-    ''', (user_id, title, reward))
+        UPDATE players 
+        SET money = money + ?, good_deeds = good_deeds + ?
+        WHERE user_id = ?
+    ''', (money_change, good_deeds_change, user_id))
     conn.commit()
     conn.close()
-
-
-def get_active_missions(user_id):
-    """Получает незавершённые миссии"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, title, reward FROM missions WHERE user_id = ? AND completed = 0', (user_id,))
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
-
-
-def complete_mission(mission_id, user_id):
-    """Завершает миссию, даёт награду"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT reward FROM missions WHERE id = ? AND user_id = ?', (mission_id, user_id))
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        return False
-    reward = row[0]
-
-    # Отметить как выполненную
-    cursor.execute('UPDATE missions SET completed = 1 WHERE id = ?', (mission_id,))
-    
-    # Добавить деньги и хорошее дело
-    cursor.execute('UPDATE players SET money = money + ?, good_deeds = good_deeds + 1 WHERE user_id = ?',
-                   (reward, user_id))
-    conn.commit()
-    conn.close()
-    return reward
 
 
 def get_top_players(sort_by='money', limit=10):
@@ -224,12 +195,11 @@ def handle_registration(call):
 
 
 def show_main_menu(chat_id):
+    """Главное меню (без кнопки заданий)"""
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("📍 Локации", callback_data="locations"),
         types.InlineKeyboardButton("🛒 Магазин", callback_data="shop"),
-        types.InlineKeyboardButton("📋 Доступные задания", callback_data="available_missions"),
-        types.InlineKeyboardButton("✅ Выполненные задания", callback_data="completed_missions"),
         types.InlineKeyboardButton("🎒 Инвентарь", callback_data="inventory"),
         types.InlineKeyboardButton("👤 Персонаж", callback_data="profile"),
         types.InlineKeyboardButton("🏆 Топ", callback_data="top_menu")
@@ -237,67 +207,140 @@ def show_main_menu(chat_id):
     bot.send_message(chat_id, "🎮 Главное меню:", reply_markup=markup)
 
 
-# === ЛОКАЦИИ И ЗАДАНИЯ ===
+# === ЛОКАЦИИ И УРОВНИ ===
 @bot.callback_query_handler(func=lambda call: call.data == "locations")
 def show_locations(call):
     markup = types.InlineKeyboardMarkup()
-    for loc in ["Лес", "Город", "Океан", "Завод"]:
+    locations = ["Лес", "Город", "Океан", "Завод"]
+    for loc in locations:
         markup.add(types.InlineKeyboardButton(loc, callback_data=f"loc_{loc.lower()}"))
     markup.add(types.InlineKeyboardButton("⬅ Назад", callback_data="back_to_menu"))
     bot.edit_message_text("Выбери локацию:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("loc_"))
-def show_location_missions(call):
-    loc = call.data.replace("loc_", "").capitalize()
-    user_id = call.from_user.id
-    player = get_player(user_id)
+def choose_difficulty(call):
+    loc_key = call.data.replace("loc_", "")
+    location_names = {
+        "лес": "Лес",
+        "город": "Город",
+        "океан": "Океан",
+        "завод": "Завод"
+    }
+    full_loc = location_names.get(loc_key)
+    if not full_loc:
+        bot.send_message(call.message.chat.id, "❌ Неизвестная локация.")
+        return
 
     markup = types.InlineKeyboardMarkup()
-    rewards = {"низкое": (20, "пластиковая бутылка"), "среднее": (50, "перчатки"), "высокое": (100, "солнечная батарея")}
-    
-    for diff, (money, item) in rewards.items():
-        req = "любой" if diff == "низкое" else "перчатки" if diff == "среднее" else "солнечная батарея"
-        can_do = diff == "низкое" or req in player['inventory']
-        text = f"{loc}: {diff.title()} ({money}💰)" + (" ✅" if can_do else " ❌")
-        cb = f"mission_{loc}_{diff}" if can_do else "cannot_do"
-        markup.add(types.InlineKeyboardButton(text, callback_data=cb))
+
+    # Всегда доступно
+    markup.add(types.InlineKeyboardButton("🟢 Лёгкий", callback_data=f"do_easy_{loc_key}"))
+
+    # Средний — только если есть "среднее снаряжение"
+    if has_item(call.from_user.id, "среднее снаряжение"):
+        markup.add(types.InlineKeyboardButton("🟡 Средний", callback_data=f"do_medium_{loc_key}"))
+    else:
+        markup.add(types.InlineKeyboardButton("🟡 Средний ❌", callback_data="no_access"))
+
+    # Сложный — только если есть "лучшее снаряжение"
+    if has_item(call.from_user.id, "лучшее снаряжение"):
+        markup.add(types.InlineKeyboardButton("🔴 Сложный", callback_data=f"do_hard_{loc_key}"))
+    else:
+        markup.add(types.InlineKeyboardButton("🔴 Сложный ❌", callback_data="no_access"))
 
     markup.add(types.InlineKeyboardButton("⬅ Назад", callback_data="locations"))
-    bot.edit_message_text(f"Задания в {loc}:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    bot.edit_message_text(f"📍 {full_loc}\nВыбери уровень сложности:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("mission_"))
-def accept_mission(call):
+# === ВЫПОЛНЕНИЕ ЗАДАНИЯ ===
+@bot.callback_query_handler(func=lambda call: call.data.startswith("do_"))
+def complete_mission(call):
     parts = call.data.split("_")
-    loc, diff = parts[1], parts[2]
-    reward = {"низкое": 20, "среднее": 50, "высокое": 100}[diff]
+    if len(parts) != 3:
+        bot.send_message(call.message.chat.id, "❌ Ошибка: неверные данные.")
+        return
 
-    add_mission(call.from_user.id, f"Уборка в {loc} ({diff})", reward)
-    bot.send_message(call.message.chat.id, f"✅ Задание принято! Награда: {reward}💰")
+    difficulty = parts[1]
+    loc_key = parts[2]
+
+    rewards = {
+        "easy": {"money": 40, "deeds": 1},
+        "medium": {"money": 100, "deeds": 2},
+        "hard": {"money": 200, "deeds": 3}
+    }
+
+    if difficulty not in rewards:
+        bot.send_message(call.message.chat.id, "❌ Неверный уровень.")
+        return
+
+    reward = rewards[difficulty]
+    update_player_stats(call.from_user.id, money_change=reward["money"], good_deeds_change=reward["deeds"])
+
+    bot.send_message(
+        call.message.chat.id,
+        f"🎯 Отлично! Ты выполнил задание на уровне *{difficulty}* в {loc_key.capitalize()}.\n\n"
+        f"Получено:\n"
+        f"💰 {reward['money']} монет\n"
+        f"🌟 +{reward['deeds']} добрых дел"
+    )
     bot.answer_callback_query(call.id)
 
 
-# === ОСТАЛЬНЫЕ КНОПКИ ===
+@bot.callback_query_handler(func=lambda call: call.data == "no_access")
+def deny_access(call):
+    bot.send_message(
+        call.message.chat.id,
+        "⚠ Чтобы выбрать этот уровень, нужно купить соответствующее снаряжение.\n"
+        "Перейди в Магазин."
+    )
+    bot.answer_callback_query(call.id)
+
+
+# === МАГАЗИН (исправлено!) ===
 @bot.callback_query_handler(func=lambda call: call.data == "shop")
 def show_shop(call):
-    items = [
-        ("🧍‍♂️ Эко-сумка", 30),
-        ("🧤 Перчатки", 50),
-        ("🔋 Солнечная батарея", 150)
-    ]
     markup = types.InlineKeyboardMarkup()
-    for name, price in items:
-        markup.add(types.InlineKeyboardButton(f"{name} ({price}💰)", callback_data=f"buy_{name.split()[1]}_{price}"))
+    # Явно указываем ключи: "среднее", "лучшее"
+    markup.add(
+        types.InlineKeyboardButton("🛠️ Среднее снаряжение (300💰)", callback_data="buy_среднее_300"),
+        types.InlineKeyboardButton("⚡ Лучшее снаряжение (800💰)", callback_data="buy_лучшее_800")
+    )
     markup.add(types.InlineKeyboardButton("⬅ Назад", callback_data="back_to_menu"))
     bot.edit_message_text("🛒 Магазин:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
 
+# === ПОКУПКА (исправлено!) ===
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def buy_item(call):
-    parts = call.data.split("_")
-    item_name = parts[1]
-    price = int(parts[2])
+    # Разделяем только на 3 части: buy_ключ_цена
+    parts = call.data.split("_", 2)  # Максимум 3 части
+    if len(parts) != 3:
+        bot.send_message(call.message.chat.id, "❌ Ошибка: некорректные данные.")
+        bot.answer_callback_query(call.id)
+        return
+
+    item_key = parts[1]
+    try:
+        price = int(parts[2])
+    except ValueError:
+        bot.send_message(call.message.chat.id, "❌ Ошибка: некорректная цена.")
+        bot.answer_callback_query(call.id)
+        return
+
+    # Чёткое соответствие
+    item_map = {
+        "среднее": "среднее снаряжение",
+        "лучшее": "лучшее снаряжение"
+    }
+    item_name = item_map.get(item_key)
+
+    if not item_name:
+        bot.send_message(call.message.chat.id, "❌ Предмет не найден.")
+        bot.answer_callback_query(call.id)
+        return
+
     user_id = call.from_user.id
     player = get_player(user_id)
 
@@ -310,40 +353,20 @@ def buy_item(call):
         bot.send_message(call.message.chat.id, f"✅ Куплено: {item_name}")
     else:
         bot.send_message(call.message.chat.id, "❌ Недостаточно денег")
+
     bot.answer_callback_query(call.id)
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "available_missions")
-def list_missions(call):
-    missions = get_active_missions(call.from_user.id)
-    if missions:
-        text = "📋 Твои задания:\n" + "\n".join(f"{i+1}. {m[1]} — {m[2]}💰" for i, m in enumerate(missions))
-    else:
-        text = "📋 Нет активных заданий."
-    bot.send_message(call.message.chat.id, text)
-    bot.answer_callback_query(call.id)
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "completed_missions")
-def complete_random_mission(call):
-    missions = get_active_missions(call.from_user.id)
-    if missions:
-        mission_id = missions[0][0]  # первое задание
-        reward = complete_mission(mission_id, call.from_user.id)
-        bot.send_message(call.message.chat.id, f"✅ Задание выполнено! Получено: {reward}💰 и +1 доброе дело!")
-    else:
-        bot.send_message(call.message.chat.id, "❌ Нет заданий для выполнения.")
-    bot.answer_callback_query(call.id)
-
-
+# === ИНВЕНТАРЬ ===
 @bot.callback_query_handler(func=lambda call: call.data == "inventory")
 def show_inventory(call):
     items = get_player(call.from_user.id)['inventory']
-    text = "🎒 Инвентарь:\n" + "\n".join(f"• {i}" for i in items) if items else "Пусто"
+    text = "🎒 Инвентарь:\n" + "\n".join(f"• {i}" for i in items) if items else "🎒 Пусто"
     bot.send_message(call.message.chat.id, text)
     bot.answer_callback_query(call.id)
 
 
+# === ПРОФИЛЬ ===
 @bot.callback_query_handler(func=lambda call: call.data == "profile")
 def show_profile(call):
     p = get_player(call.from_user.id)
@@ -356,6 +379,7 @@ def show_profile(call):
     bot.answer_callback_query(call.id)
 
 
+# === ТОП ===
 @bot.callback_query_handler(func=lambda call: call.data == "top_menu")
 def top_menu(call):
     markup = types.InlineKeyboardMarkup()
@@ -383,6 +407,7 @@ def show_top(call):
     bot.answer_callback_query(call.id)
 
 
+# === НАЗАД В МЕНЮ ===
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_menu")
 def back_to_menu(call):
     show_main_menu(call.message.chat.id)
